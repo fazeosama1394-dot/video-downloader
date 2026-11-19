@@ -76,6 +76,24 @@ def stream_remote(src, filename):
                     headers=headers)
 
 
+PROXY_OK = re.compile(
+    r"^https://([a-z0-9-]+\.)*(tikwm\.com|tiktokcdn\.com|tiktokcdn-us\.com|"
+    r"tiktokv\.com|muscdn\.com|byteoversea\.com|ibytedtos\.com)/", re.I)
+
+
+@app.get("/api/proxy")
+def proxy():
+    src = request.args.get("src", "")
+    name = re.sub(r"[^\w.-]", "_", request.args.get("name", "video.mp4"))[:80]
+    if not PROXY_OK.match(src):
+        return jsonify(error="رابط غير مسموح"), 400
+    try:
+        return stream_remote(src, name)
+    except Exception:
+        log_error("proxy")
+        return jsonify(error="فشل التحميل"), 502
+
+
 @app.get("/")
 def index():
     return send_from_directory(BASE, "index.html")

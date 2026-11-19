@@ -51,6 +51,7 @@
           <button class="b1" id="dv">تحميل الفيديو MP4</button>
           <button class="b2" id="da">تحميل الصوت فقط</button>
         </div>
+        <a id="direct" target="_blank" rel="noopener" style="display:none;margin-top:10px;color:var(--acc);font-size:13px">لم يبدأ التحميل؟ افتح الفيديو مباشرة ثم احفظه</a>
       </div>
     </div>
   </div>
@@ -60,15 +61,42 @@
 <script>
 const $ = id => document.getElementById(id);
 let current = "";
+let tk = null; // بيانات تيك توك المجلوبة من المتصفح مباشرة
+
+const full = u => !u ? null : (u.startsWith("http") ? u : "https://www.tikwm.com" + u);
+
+// نجلب تيك توك من جوال المستخدم نفسه لأن تيك توك يحجب الخوادم
+async function tikwmClient(url){
+  const r = await fetch("https://www.tikwm.com/api/", {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: "url=" + encodeURIComponent(url) + "&hd=1"
+  });
+  const j = await r.json();
+  if(j.code !== 0 || !j.data) throw new Error(j.msg || "tikwm");
+  const d = j.data;
+  return {
+    title: d.title || "TikTok", thumbnail: full(d.cover), duration: d.duration,
+    uploader: (d.author || {}).nickname, platform: "TikTok", id: d.id || "video",
+    video: full(d.hdplay) || full(d.play), audio: full(d.music)
+  };
+}
 
 async function fetchInfo(){
   const url = $("url").value.trim();
   if(!url){ $("msg").textContent = "الصق رابطاً أولاً"; return; }
   $("go").disabled = true; $("msg").textContent = "جارٍ الجلب..."; $("res").style.display = "none";
+  tk = null;
   try{
-    const r = await fetch("/api/info?url=" + encodeURIComponent(url));
-    const d = await r.json();
-    if(!r.ok) throw new Error(d.error);
+    let d = null;
+    if(/tiktok\.com\//i.test(url)){
+      try{ d = tk = await tikwmClient(url); }catch(e){ console.log("tikwm client failed", e); }
+    }
+    if(!d){
+      const r = await fetch("/api/info?url=" + encodeURIComponent(url));
+      d = await r.json();
+      if(!r.ok) throw new Error(d.error);
+    }
     current = url;
     $("thumb").src = d.thumbnail || "";
     $("title").textContent = d.title || "بدون عنوان";
@@ -81,6 +109,16 @@ async function fetchInfo(){
 
 function dl(type){
   $("msg").textContent = "جارٍ تجهيز الملف، قد يستغرق ثوانٍ...";
+  if(tk){
+    const src = type === "audio" ? tk.audio : tk.video;
+    const name = "tiktok_" + tk.id + (type === "audio" ? ".mp3" : ".mp4");
+    if(src){
+      window.location.href = "/api/proxy?name=" + encodeURIComponent(name) + "&src=" + encodeURIComponent(src);
+      $("direct").href = src; $("direct").style.display = "inline-block";
+      setTimeout(() => $("msg").textContent = "", 6000);
+      return;
+    }
+  }
   window.location.href = "/api/download?type=" + type + "&url=" + encodeURIComponent(current);
   setTimeout(() => $("msg").textContent = "", 6000);
 }
