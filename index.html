@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>محمّل الفيديو — تيك توك ويوتيوب بدون علامة مائية</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0d0f14;--card:#161a22;--line:#262c38;--txt:#eef1f6;--mut:#8a93a6;--acc:#25f4ee;--acc2:#fe2c55}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Tajawal',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;
+       display:flex;flex-direction:column;align-items:center;padding:48px 16px}
+  h1{font-size:clamp(28px,6vw,44px);font-weight:800;text-align:center;line-height:1.2}
+  h1 span{background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-background-clip:text;color:transparent}
+  .sub{color:var(--mut);margin:12px 0 32px;text-align:center}
+  .box{width:100%;max-width:620px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px}
+  .row{display:flex;gap:10px}
+  input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:12px;
+        padding:14px;font:inherit;direction:ltr;text-align:left}
+  input:focus{outline:none;border-color:var(--acc)}
+  button{font:inherit;font-weight:700;border:0;border-radius:12px;padding:14px 20px;cursor:pointer}
+  .go{background:linear-gradient(90deg,var(--acc),var(--acc2));color:#000}
+  button:disabled{opacity:.5;cursor:wait}
+  .msg{margin-top:14px;color:var(--acc2);min-height:1em;font-size:14px}
+  .res{display:none;margin-top:18px;gap:14px;align-items:center}
+  .res img{width:110px;height:110px;object-fit:cover;border-radius:12px;background:#000}
+  .res h3{font-size:16px;margin-bottom:6px}
+  .res small{color:var(--mut)}
+  .btns{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .b1{background:var(--acc);color:#000}.b2{background:transparent;color:var(--txt);border:1px solid var(--line)}
+  footer{margin-top:40px;color:var(--mut);font-size:13px;text-align:center;max-width:520px}
+  @media(max-width:480px){.row{flex-direction:column}.res{flex-direction:column;text-align:center}}
+</style>
+</head>
+<body>
+  <h1>حمّل من <span>تيك توك</span> و<span>يوتيوب</span></h1>
+  <p class="sub">الصق الرابط واحصل على الفيديو بدون علامة مائية — مجاناً وبسرعة</p>
+
+  <div class="box">
+    <div class="row">
+      <input id="url" placeholder="https://www.tiktok.com/@user/video/..." autocomplete="off">
+      <button class="go" id="go">جلب الفيديو</button>
+    </div>
+    <div class="msg" id="msg"></div>
+    <div class="res" id="res">
+      <img id="thumb" alt="">
+      <div>
+        <h3 id="title"></h3>
+        <small id="meta"></small>
+        <div class="btns">
+          <button class="b1" id="dv">تحميل الفيديو MP4</button>
+          <button class="b2" id="da">تحميل الصوت فقط</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>للاستخدام الشخصي فقط. احترم حقوق أصحاب المحتوى ولا تُعِد نشر مقاطعهم دون إذن.</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+let current = "";
+
+async function fetchInfo(){
+  const url = $("url").value.trim();
+  if(!url){ $("msg").textContent = "الصق رابطاً أولاً"; return; }
+  $("go").disabled = true; $("msg").textContent = "جارٍ الجلب..."; $("res").style.display = "none";
+  try{
+    const r = await fetch("/api/info?url=" + encodeURIComponent(url));
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error);
+    current = url;
+    $("thumb").src = d.thumbnail || "";
+    $("title").textContent = d.title || "بدون عنوان";
+    const m = d.duration ? Math.floor(d.duration/60) + ":" + String(Math.round(d.duration%60)).padStart(2,"0") : "";
+    $("meta").textContent = [d.platform, d.uploader, m].filter(Boolean).join(" • ");
+    $("res").style.display = "flex"; $("msg").textContent = "";
+  }catch(e){ $("msg").textContent = e.message || "حدث خطأ"; }
+  $("go").disabled = false;
+}
+
+function dl(type){
+  $("msg").textContent = "جارٍ تجهيز الملف، قد يستغرق ثوانٍ...";
+  window.location.href = "/api/download?type=" + type + "&url=" + encodeURIComponent(current);
+  setTimeout(() => $("msg").textContent = "", 6000);
+}
+
+$("go").onclick = fetchInfo;
+$("url").addEventListener("keydown", e => e.key === "Enter" && fetchInfo());
+$("dv").onclick = () => dl("video");
+$("da").onclick = () => dl("audio");
+</script>
+</body>
+</html>
