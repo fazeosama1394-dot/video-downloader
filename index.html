@@ -48,9 +48,11 @@
         <h3 id="title"></h3>
         <small id="meta"></small>
         <div class="btns">
-          <button class="b1" id="dv">تحميل الفيديو MP4</button>
+          <button class="b1" id="ph">📸 حفظ في الصور</button>
+          <button class="b2" id="dv">تحميل كملف MP4</button>
           <button class="b2" id="da">تحميل الصوت فقط</button>
         </div>
+        <button class="b1" id="share" style="display:none;margin-top:10px;width:100%">✅ جاهز — اضغط هنا ثم اختر «حفظ الفيديو»</button>
         <a id="direct" target="_blank" rel="noopener" style="display:none;margin-top:10px;color:var(--acc);font-size:13px">لم يبدأ التحميل؟ افتح الفيديو مباشرة ثم احفظه</a>
       </div>
     </div>
@@ -86,7 +88,8 @@ async function fetchInfo(){
   const url = $("url").value.trim();
   if(!url){ $("msg").textContent = "الصق رابطاً أولاً"; return; }
   $("go").disabled = true; $("msg").textContent = "جارٍ الجلب..."; $("res").style.display = "none";
-  tk = null;
+  tk = null; readyFile = null;
+  $("share").style.display = "none"; $("direct").style.display = "none";
   try{
     let d = null;
     if(/tiktok\.com\//i.test(url)){
@@ -107,25 +110,67 @@ async function fetchInfo(){
   $("go").disabled = false;
 }
 
-function dl(type){
-  $("msg").textContent = "جارٍ تجهيز الملف، قد يستغرق ثوانٍ...";
+// يبني رابط التحميل من خادمنا (نفس النطاق، فلا مشاكل CORS)
+function fileUrl(type){
   if(tk){
     const src = type === "audio" ? tk.audio : tk.video;
-    const name = "tiktok_" + tk.id + (type === "audio" ? ".mp3" : ".mp4");
     if(src){
-      window.location.href = "/api/proxy?name=" + encodeURIComponent(name) + "&src=" + encodeURIComponent(src);
+      const name = "tiktok_" + tk.id + (type === "audio" ? ".mp3" : ".mp4");
       $("direct").href = src; $("direct").style.display = "inline-block";
-      setTimeout(() => $("msg").textContent = "", 6000);
-      return;
+      return "/api/proxy?name=" + encodeURIComponent(name) + "&src=" + encodeURIComponent(src);
     }
   }
-  window.location.href = "/api/download?type=" + type + "&url=" + encodeURIComponent(current);
+  return "/api/download?type=" + type + "&url=" + encodeURIComponent(current);
+}
+
+function dl(type){
+  $("msg").textContent = "جارٍ تجهيز الملف، قد يستغرق ثوانٍ...";
+  window.location.href = fileUrl(type);
   setTimeout(() => $("msg").textContent = "", 6000);
+}
+
+// الحفظ في الصور: نجهّز الفيديو أولاً، ثم نفتح قائمة المشاركة وفيها «حفظ الفيديو»
+let readyFile = null;
+async function toPhotos(){
+  $("share").style.display = "none"; readyFile = null;
+  $("ph").disabled = true;
+  $("msg").textContent = "جارٍ تجهيز الفيديو للحفظ في الصور...";
+  try{
+    const r = await fetch(fileUrl("video"));
+    if(!r.ok){ let e = "فشل التحميل"; try{ e = (await r.json()).error || e; }catch(_){} throw new Error(e); }
+    const blob = await r.blob();
+    const name = (tk ? "tiktok_" + tk.id : "video") + ".mp4";
+    const file = new File([blob], name, {type: "video/mp4"});
+    if(navigator.canShare && navigator.canShare({files: [file]})){
+      readyFile = file;
+      $("share").style.display = "block";
+      $("msg").textContent = "";
+    }else{
+      // متصفح لا يدعم المشاركة: نحفظه كملف عادي
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = name; a.click();
+      $("msg").textContent = "متصفحك لا يدعم الحفظ المباشر في الصور، فحُفظ كملف.";
+    }
+  }catch(e){ $("msg").textContent = e.message || "حدث خطأ"; }
+  $("ph").disabled = false;
+}
+
+async function shareNow(){
+  if(!readyFile) return;
+  try{
+    await navigator.share({files: [readyFile]});
+    $("msg").textContent = "تم ✅ ستجد الفيديو في تطبيق الصور";
+    $("share").style.display = "none";
+  }catch(e){
+    if(e.name !== "AbortError") $("msg").textContent = "تعذّر فتح قائمة المشاركة، حاول مرة أخرى.";
+  }
 }
 
 $("go").onclick = fetchInfo;
 $("url").addEventListener("keydown", e => e.key === "Enter" && fetchInfo());
 $("dv").onclick = () => dl("video");
+$("ph").onclick = toPhotos;
+$("share").onclick = shareNow;
 $("da").onclick = () => dl("audio");
 </script>
 </body>
