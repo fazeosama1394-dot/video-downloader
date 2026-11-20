@@ -94,6 +94,130 @@ def proxy():
         return jsonify(error="فشل التحميل"), 502
 
 
+# ---------- تحويل منشور الصور إلى فيديو (يعمل في الخلفية) ----------
+import json
+import subprocess
+import threading
+import uuid
+
+JOBS = {}  # job_id -> {"status": "working|done|error", "path": ..., "dir": ...}
+
+
+def fetch_to(src, path):
+    r = requests.get(src, headers={"User-Agent": UA}, timeout=60)
+    r.raise_for_status()
+    with open(path, "wb") as f:
+        f.write(r.content)
+
+
+def build_slideshow(job_id, images, audio, audio_dur):
+    job = JOBS[job_id]
+    d = job["dir"]
+    try:
+        import imageio_ffmpeg
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+
+        imgs = []
+        for i, src in enumerate(images):
+            p = os.path.join(d, f"img{i}")
+            fetch_to(src, p)
+            imgs.append(p)
+
+        a_path = None
+        if audio:
+            try:
+                a_path = os.path.join(d, "audio")
+                fetch_to(audio, a_path)
+            except Exception:
+                log_error("slideshow audio")
+                a_path = None
+
+        n = len(imgs)
+        per = 3.0
+        if a_path and audio_dur and audio_dur > 0:
+            per = max(2.0, min(5.0, audio_dur / n))
+        total_imgs = per * n
+        total = audio_dur if (a_path and audio_dur and audio_dur > total_imgs) else total_imgs
+        total = min(total, 180)  # حد أقصى 3 دقائق
+
+        # نكرر الصور إن كان الصوت أطول منها
+        seq, t = [], 0.0
+        while t < total:
+            for p in imgs:
+                seq.append(p)
+                t += per
+                if t >= total:
+                    break
+        lst = os.path.join(d, "list.txt")
+        with open(lst, "w") as f:
+            for p in seq:
+                f.write(f"file '{p}'\nduration {per}\n")
+            f.write(f"file '{seq[-1]}'\n")
+
+        out = os.path.join(d, "slideshow.mp4")
+        cmd = [ff, "-y", "-f", "concat", "-safe", "0", "-i", lst]
+        if a_path:
+            cmd += ["-i", a_path]
+        cmd += ["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,"
+                       "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p",
+                "-r", "15", "-c:v", "libx264", "-preset", "veryfast",
+                "-tune", "stillimage", "-crf", "20"]
+        if a_path:
+            cmd += ["-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-t", f"{total:.2f}", "-movflags", "+faststart", out]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if res.returncode != 0:
+            raise RuntimeError(res.stderr[-1500:])
+        job["path"] = out
+        job["status"] = "done"
+    except Exception:
+        log_error("slideshow")
+        job["status"] = "error"
+
+
+@app.post("/api/slideshow")
+def slideshow():
+    body = request.get_json(silent=True) or {}
+    images = [u for u in (body.get("images") or []) if PROXY_OK.match(u or "")][:35]
+    audio = body.get("audio") if PROXY_OK.match(body.get("audio") or "") else None
+    try:
+        audio_dur = float(body.get("duration") or 0)
+    except ValueError:
+        audio_dur = 0
+    if not images:
+        return jsonify(error="لا توجد صور"), 400
+    job_id = uuid.uuid4().hex
+    JOBS[job_id] = {"status": "working", "dir": tempfile.mkdtemp(), "path": None}
+    threading.Thread(target=build_slideshow,
+                     args=(job_id, images, audio, audio_dur), daemon=True).start()
+    return jsonify(job=job_id)
+
+
+@app.get("/api/job/<job_id>")
+def job_status(job_id):
+    job = JOBS.get(job_id)
+    if not job:
+        return jsonify(status="error"), 404
+    return jsonify(status=job["status"])
+
+
+@app.get("/api/job/<job_id>/file")
+def job_file(job_id):
+    job = JOBS.get(job_id)
+    if not job or job["status"] != "done":
+        return jsonify(error="غير جاهز"), 404
+
+    @after_this_request
+    def cleanup(resp):
+        JOBS.pop(job_id, None)
+        threading.Timer(60, shutil.rmtree, args=(job["dir"],),
+                        kwargs={"ignore_errors": True}).start()
+        return resp
+
+    return send_file(job["path"], mimetype="video/mp4", as_attachment=True,
+                     download_name=f"tiktok_slideshow.mp4")
+
+
 @app.get("/")
 def index():
     return send_from_directory(BASE, "index.html")
