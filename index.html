@@ -49,6 +49,7 @@
         <small id="meta"></small>
         <div class="btns">
           <button class="b1" id="ph">📸 حفظ في الصور</button>
+          <button class="b1" id="sv" style="display:none">🎬 حفظ كفيديو في الصور</button>
           <button class="b2" id="dv">تحميل كملف MP4</button>
           <button class="b2" id="da">تحميل الصوت فقط</button>
         </div>
@@ -81,7 +82,8 @@ async function tikwmClient(url){
     title: d.title || "TikTok", thumbnail: full(d.cover), duration: d.duration,
     uploader: (d.author || {}).nickname, platform: "TikTok", id: d.id || "video",
     video: full(d.hdplay) || full(d.play), audio: full(d.music),
-    images: (d.images || []).map(full).filter(Boolean)
+    images: (d.images || []).map(full).filter(Boolean),
+    musicDur: (d.music_info || {}).duration || d.duration || 0
   };
 }
 
@@ -109,6 +111,7 @@ async function fetchInfo(){
     const nImg = tk && tk.images.length;
     $("ph").textContent = nImg ? "📸 حفظ الصور (" + nImg + ") في الألبوم" : "📸 حفظ في الصور";
     $("dv").style.display = nImg ? "none" : "";
+    $("sv").style.display = nImg ? "" : "none";
     $("res").style.display = "flex";
     $("msg").textContent = nImg ? "هذا منشور صور وليس فيديو، يمكنك حفظ الصور أو الصوت." : "";
   }catch(e){ $("msg").textContent = e.message || "حدث خطأ"; }
@@ -176,6 +179,44 @@ async function toPhotos(){
   $("ph").disabled = false;
 }
 
+// منشور صور ← فيديو عالي الجودة (1080×1920) مع الصوت، يُجهَّز على الخادم
+async function slideVideo(){
+  if(!tk || !tk.images.length) return;
+  $("share").style.display = "none"; readyFile = null;
+  $("sv").disabled = true;
+  $("msg").textContent = "جارٍ صنع الفيديو من الصور... قد يستغرق دقيقة أو أكثر";
+  try{
+    const r = await fetch("/api/slideshow", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({images: tk.images, audio: tk.audio, duration: tk.musicDur})
+    });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error || "فشل");
+    let st = "working", secs = 0;
+    while(st === "working"){
+      await new Promise(res => setTimeout(res, 3000)); secs += 3;
+      st = (await (await fetch("/api/job/" + j.job)).json()).status;
+      $("msg").textContent = "جارٍ صنع الفيديو من الصور... (" + secs + " ثانية)";
+      if(secs > 600) throw new Error("استغرق وقتاً طويلاً، حاول مرة أخرى");
+    }
+    if(st !== "done") throw new Error("تعذّر صنع الفيديو، حاول مرة أخرى");
+    const f = await fetch("/api/job/" + j.job + "/file");
+    if(!f.ok) throw new Error("تعذّر تنزيل الفيديو");
+    const blob = await f.blob();
+    const file = new File([blob], "tiktok_" + tk.id + ".mp4", {type: "video/mp4"});
+    if(navigator.canShare && navigator.canShare({files: [file]})){
+      readyFile = [file];
+      $("share").textContent = "✅ الفيديو جاهز — اضغط هنا ثم اختر «حفظ الفيديو»";
+      $("share").style.display = "block"; $("msg").textContent = "";
+    }else{
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+      $("msg").textContent = "حُفظ الفيديو كملف.";
+    }
+  }catch(e){ $("msg").textContent = e.message || "حدث خطأ"; }
+  $("sv").disabled = false;
+}
+
 async function shareNow(){
   if(!readyFile) return;
   try{
@@ -191,6 +232,7 @@ $("go").onclick = fetchInfo;
 $("url").addEventListener("keydown", e => e.key === "Enter" && fetchInfo());
 $("dv").onclick = () => dl("video");
 $("ph").onclick = toPhotos;
+$("sv").onclick = slideVideo;
 $("share").onclick = shareNow;
 $("da").onclick = () => dl("audio");
 </script>
